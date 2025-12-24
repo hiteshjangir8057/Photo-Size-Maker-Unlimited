@@ -1,1 +1,0 @@
-# Photo-Size-Maker-Unlimited

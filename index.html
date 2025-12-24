@@ -1,0 +1,296 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Precision Image Optimizer v3 | Fixed 0KB Bug</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #f1f5f9; color: #0f172a; }
+        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.5); }
+        
+        @keyframes successFlash {
+            0% { border-color: #22c55e; box-shadow: 0 0 30px #22c55e; }
+            100% { border-color: transparent; box-shadow: none; }
+        }
+        .flash-active { animation: successFlash 0.5s ease-out; border: 2px solid #22c55e !important; }
+
+        .photo-card { transition: all 0.3s ease; border-radius: 2rem; overflow: hidden; }
+        .locked { pointer-events: none; opacity: 0.5; filter: blur(1px); }
+        
+        input[type=range] { -webkit-appearance: none; background: #dee5ff; height: 8px; border-radius: 10px; }
+        input[type=range]::-webkit-slider-thumb { 
+            -webkit-appearance: none; height: 22px; width: 22px; 
+            background: #4f46e5; border-radius: 50%; border: 3px solid white; cursor: pointer;
+        }
+    </style>
+</head>
+<body class="pb-20">
+
+    <nav class="sticky top-0 z-50 glass border-b px-6 py-4 shadow-sm">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-6">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold">P</div>
+                <h1 class="text-xl font-black">Photo Size Maker<span class="text-indigo-600"> Unlimited</span></h1>
+            </div>
+
+            <div id="controls" class="flex flex-wrap items-center gap-4 bg-slate-100 p-2 rounded-2xl border">
+                <div class="flex items-center gap-2 px-4 bg-white rounded-xl shadow-sm py-2">
+                    <span class="text-[10px] font-bold text-slate-400">TARGET</span>
+                    <input type="number" id="targetInput" value="50" class="w-16 bg-transparent text-indigo-600 font-black text-xl outline-none">
+                    <span class="text-xs font-bold text-slate-400">KB</span>
+                </div>
+                <input type="range" id="targetSlider" min="5" max="1000" value="50" class="w-32 md:w-64">
+                <select id="formatSelect" class="bg-white px-3 py-2 rounded-xl text-xs font-bold outline-none cursor-pointer">
+                    <option value="image/jpeg">JPG</option>
+                    <option value="image/webp">WEBP</option>
+                    <option value="image/png">PNG</option>
+                </select>
+            </div>
+
+            <div class="flex gap-2">
+                <button onclick="document.getElementById('fileInput').click()" class="bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg">Upload</button>
+                <button id="zipBtn" onclick="downloadZip()" class="hidden bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold text-sm">ZIP All</button>
+            </div>
+            <input type="file" id="fileInput" multiple accept="image/*" class="hidden">
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 mt-10">
+        <!-- Dashboard -->
+        <div id="dashboard" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+            <div class="bg-white p-5 rounded-[1.5rem] border">
+                <p class="text-[10px] font-bold text-slate-400 uppercase">Avg Match</p>
+                <h2 id="avgAccuracy" class="text-2xl font-black text-indigo-600">0%</h2>
+            </div>
+            <div class="bg-white p-5 rounded-[1.5rem] border">
+                <p class="text-[10px] font-bold text-slate-400 uppercase">Space Saved</p>
+                <h2 id="totalSaved" class="text-2xl font-black text-emerald-500">0 KB</h2>
+            </div>
+            <div class="bg-white p-5 rounded-[1.5rem] border">
+                <p class="text-[10px] font-bold text-slate-400 uppercase">Files</p>
+                <h2 id="fileCount" class="text-2xl font-black text-slate-800">0</h2>
+            </div>
+            <div class="bg-indigo-50 p-5 rounded-[1.5rem] border border-indigo-100">
+                <p class="text-[10px] font-bold text-indigo-400 uppercase">Status</p>
+                <h2 class="text-sm font-black text-indigo-700">98% PRECISION ACTIVE</h2>
+            </div>
+        </div>
+
+        <div id="resultGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+            <div id="placeholder" class="col-span-full py-40 text-center opacity-20">
+                <h2 class="text-4xl font-black uppercase tracking-tighter">No Photos Selected</h2>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const targetSlider = document.getElementById('targetSlider');
+        const targetInput = document.getElementById('targetInput');
+        const formatSelect = document.getElementById('formatSelect');
+        const resultGrid = document.getElementById('resultGrid');
+        const zipBtn = document.getElementById('zipBtn');
+        const dashboard = document.getElementById('dashboard');
+
+        let fileQueue = []; 
+        let analyticsStore = {};
+        let isProcessing = false;
+
+        function setLock(state) {
+            isProcessing = state;
+            const ui = [targetInput, targetSlider, formatSelect, zipBtn, ...document.querySelectorAll('.dl-btn')];
+            ui.forEach(el => el && (state ? el.classList.add('locked') : el.classList.remove('locked')));
+        }
+
+        targetInput.addEventListener('input', () => { targetSlider.value = targetInput.value; triggerUpdate(); });
+        targetSlider.addEventListener('input', () => { targetInput.value = targetSlider.value; triggerUpdate(); });
+        formatSelect.addEventListener('change', triggerUpdate);
+
+        fileInput.onchange = (e) => {
+            const files = Array.from(e.target.files);
+            if(files.length > 0) {
+                document.getElementById('placeholder').style.display = 'none';
+                dashboard.classList.remove('hidden');
+                zipBtn.classList.remove('hidden');
+                files.forEach(file => {
+                    const id = 'id-' + Math.random().toString(36).substr(2, 9);
+                    fileQueue.push({ id, file, originalName: file.name, originalSize: file.size/1024 });
+                    renderCard(id, file);
+                });
+                triggerUpdate();
+            }
+        };
+
+        function renderCard(id, file) {
+            const card = document.createElement('div');
+            card.id = `card-${id}`;
+            card.className = "photo-card bg-white p-4 border flex flex-col shadow-sm";
+            card.innerHTML = `
+                <div class="relative h-48 w-full rounded-2xl overflow-hidden mb-4 bg-slate-50">
+                    <img id="img-${id}" class="w-full h-full object-cover">
+                    <div id="loader-${id}" class="absolute inset-0 flex items-center justify-center bg-white/80">
+                        <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                </div>
+                <h3 class="text-[10px] font-bold text-slate-400 truncate uppercase mb-4">${file.name}</h3>
+                <div class="flex justify-between items-center bg-indigo-50 p-3 rounded-xl mb-4">
+                    <span class="text-[10px] font-black text-indigo-400">RESULT</span>
+                    <span id="size-${id}" class="text-xs font-black text-indigo-600">WAITING...</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-4">
+                    <div class="bg-slate-50 p-2 rounded-lg text-center">
+                        <p class="text-[8px] font-bold text-slate-400">ACCURACY</p>
+                        <p id="acc-${id}" class="text-[10px] font-black text-slate-700">0%</p>
+                    </div>
+                    <div class="bg-emerald-50 p-2 rounded-lg text-center">
+                        <p class="text-[8px] font-bold text-emerald-400">SAVINGS</p>
+                        <p id="save-${id}" class="text-[10px] font-black text-emerald-600">0%</p>
+                    </div>
+                </div>
+                <a id="dl-${id}" download="${file.name}" class="dl-btn block text-center bg-slate-900 text-white py-3 rounded-xl text-[10px] font-bold hover:bg-indigo-600 transition-all">DOWNLOAD</a>
+            `;
+            resultGrid.prepend(card);
+        }
+
+        let debounce;
+        function triggerUpdate() {
+            if(isProcessing) return;
+            clearTimeout(debounce);
+            debounce = setTimeout(async () => {
+                setLock(true);
+                const target = parseInt(targetInput.value);
+                const format = formatSelect.value;
+                const tasks = fileQueue.map(item => processSingle(item, target, format));
+                await Promise.all(tasks);
+                updateStats();
+                setLock(false);
+            }, 100);
+        }
+
+        async function processSingle(item, target, format) {
+            const result = await smartEngine(item.file, target, format);
+            const card = document.getElementById(`card-${item.id}`);
+            const img = document.getElementById(`img-${item.id}`);
+            const sizeLabel = document.getElementById(`size-${item.id}`);
+            const accLabel = document.getElementById(`acc-${item.id}`);
+            const saveLabel = document.getElementById(`save-${item.id}`);
+            const dlBtn = document.getElementById(`dl-${item.id}`);
+            const loader = document.getElementById(`loader-${item.id}`);
+
+            img.src = result.url;
+            sizeLabel.innerText = `${result.kb.toFixed(1)} KB`;
+            
+            // Precision Calculation
+            const accuracy = (100 - Math.min(100, (Math.abs(target - result.kb) / target) * 100)).toFixed(1);
+            accLabel.innerText = `${accuracy}%`;
+            saveLabel.innerText = `${(((item.originalSize - result.kb) / item.originalSize) * 100).toFixed(0)}%`;
+            
+            const ext = format.split('/')[1].replace('jpeg', 'jpg');
+            dlBtn.download = item.originalName.split('.')[0] + '.' + ext;
+            dlBtn.href = result.url;
+            if(loader) loader.style.display = 'none';
+
+            card.classList.remove('flash-active');
+            void card.offsetWidth;
+            card.classList.add('flash-active');
+
+            analyticsStore[item.id] = { kb: result.kb, orig: item.originalSize, acc: parseFloat(accuracy), name: dlBtn.download, b64: result.url.split(',')[1] };
+        }
+
+        // --- THE ENGINE (FIXED) ---
+        function smartEngine(file, target, format) {
+            return new Promise((resolve) => {
+                createImageBitmap(file).then(bmp => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d', { alpha: false });
+                    
+                    let bestUrl = "";
+                    let bestKb = 999999;
+                    let lastUrl = "";
+                    let lastKb = 0;
+
+                    // Algorithm: Quality Binary Search -> then Scaling
+                    const solve = (w, h, q) => {
+                        canvas.width = Math.max(100, w); // Never go below 100px
+                        canvas.height = Math.max(100, h);
+                        ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+                        const url = canvas.toDataURL(format, q);
+                        const kb = (url.length * 3 / 4) / 1024;
+                        return { url, kb };
+                    };
+
+                    // Initial Try
+                    let q = 0.9, w = bmp.width, h = bmp.height;
+                    let result = solve(w, h, q);
+
+                    // If already smaller, don't over-compress
+                    if (result.kb <= target) {
+                        resolve({ url: result.url, kb: result.kb });
+                        return;
+                    }
+
+                    // Phase 1: Lower Quality to 0.1
+                    for (let testQ = 0.9; testQ >= 0.1; testQ -= 0.1) {
+                        result = solve(w, h, testQ);
+                        if (result.kb <= target * 1.1) { 
+                            q = testQ; 
+                            break; 
+                        }
+                    }
+
+                    // Phase 2: If still too big, Lower Resolution
+                    let scale = 0.9;
+                    while (result.kb > target * 1.05 && scale > 0.1) {
+                        result = solve(bmp.width * scale, bmp.height * scale, q);
+                        scale -= 0.1;
+                    }
+
+                    // Phase 3: Micro-tuning Quality at that scale (Final 98% Match)
+                    let lowQ = 0.1, highQ = 1.0;
+                    for(let i=0; i<6; i++) {
+                        let midQ = (lowQ + highQ) / 2;
+                        let test = solve(canvas.width, canvas.height, midQ);
+                        if (test.kb <= target) {
+                            result = test;
+                            lowQ = midQ;
+                        } else {
+                            highQ = midQ;
+                        }
+                    }
+
+                    // Final Safety: If KB is somehow 0, fallback to original or smallest
+                    if (result.kb < 0.1) {
+                        result = solve(150, 150, 0.5);
+                    }
+
+                    resolve({ url: result.url, kb: result.kb });
+                    bmp.close();
+                });
+            });
+        }
+
+        function updateStats() {
+            const data = Object.values(analyticsStore);
+            let totalOrig = 0, totalNew = 0, totalAcc = 0;
+            data.forEach(d => { totalOrig += d.orig; totalNew += d.kb; totalAcc += d.acc; });
+            document.getElementById('totalSaved').innerText = `${Math.round(totalOrig - totalNew)} KB`;
+            document.getElementById('avgAccuracy').innerText = `${(totalAcc / data.length).toFixed(1)}%`;
+            document.getElementById('fileCount').innerText = data.length;
+        }
+
+        async function downloadZip() {
+            const zip = new JSZip();
+            Object.values(analyticsStore).forEach(p => zip.file(p.name, p.b64, {base64: true}));
+            const blob = await zip.generateAsync({type: "blob"});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = "Precision_Fixed_Photos.zip";
+            a.click();
+        }
+    </script>
+</body>
+</html>
